@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Neural Novelty Field — Ambient DMN Interrupter</title>
+<meta name="description" content="Subtle, low-effort ambient novelty for reducing rumination loops: evolving visuals + optional micro-varying audio." />
+<style>
+  :root{
+    --bg:#0e1116; --ink:#e9eef6; --muted:#a7b1c2; --card:#141a1f;
+    --accent:#79ffe1; --accent2:#ffd279;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  .app{display:grid;grid-template-columns:320px 1fr;grid-template-rows:auto 1fr;min-height:100%}
+  header{grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #1f2630;background:#0b0f15}
+  header h1{font-size:16px;letter-spacing:.2px;margin:0;font-weight:600;color:#dfe7f4}
+  header .actions{display:flex;gap:8px;align-items:center}
+  button, select, input[type="range"]{
+    appearance:none;border:none;border-radius:12px;background:#1a2130;color:#e9eef6;
+    padding:10px 12px;font-size:14px;outline:none;transition:transform .05s ease, background .2s ease, box-shadow .2s ease;
+  }
+  button:hover{background:#20283a}
+  button:active{transform:translateY(1px)}
+  .ghost{background:transparent;border:1px solid #2a3345}
+  .primary{background:linear-gradient(135deg,#2b8cff,#6ee7ff)}
+  .panel{
+    padding:14px;border-right:1px solid #1f2630;background:linear-gradient(180deg,#0e131b, #0b0f15 40%, #0b0f15);
+  }
+  .group{border:1px solid #1f2630;background:var(--card);border-radius:16px;padding:12px;margin-bottom:12px}
+  .group h3{margin:0 0 8px 0;font-size:13px;font-weight:600;color:#d5deeb}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0}
+  label{font-size:13px;color:#c6cfdd}
+  .hint{font-size:12px;color:var(--muted)}
+  .canvas-wrap{position:relative;overflow:hidden}
+  canvas{display:block;width:100%;height:100%;background:#0a0e14}
+  .overlay{
+    position:absolute;inset:12px;pointer-events:none;display:flex;align-items:flex-end;justify-content:space-between;
+    font-size:11px;color:#9fb0c6;opacity:.7;gap:8px
+  }
+  .overlay .left{align-self:flex-end}
+  .overlay .right{margin-left:auto}
+  .muted{opacity:.75}
+  .footer{font-size:11px;color:#99a7bc}
+  .toggle{display:flex;align-items:center;gap:8px}
+  .toggle input{width:42px;height:24px;appearance:none;background:#1b2230;border-radius:999px;position:relative;outline:none;border:1px solid #2a3446}
+  .toggle input:checked{background:#2b8cff}
+  .toggle input:before{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#e9eef6;transition:left .2s}
+  .toggle input:checked:before{left:20px}
+  .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1420;border:1px solid #1f2630;border-radius:8px;padding:2px 6px;font-size:11px}
+
+  @media (max-width: 900px){
+    .app{grid-template-columns:1fr;grid-template-rows:auto auto 1fr}
+    .panel{grid-column:1;grid-row:2}
+  }
+
+  /* Immersive fullscreen: hide sidebar and chrome when in FS */
+  .app.immersive{ grid-template-columns:1fr !important; }
+  .app.immersive .panel{ display:none !important; }
+  .app.immersive header{ background:transparent; border-bottom:none; }
+  .app.immersive .overlay{ opacity:.55; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <h1>Neural Novelty Field <span class="hint">· subtle ambient variation for anti-rumination</span></h1>
+    <div class="actions">
+      <button id="btnStart" class="primary">Start</button>
+      <button id="btnPause" class="ghost">Pause</button>
+      <button id="btnFullscreen" class="ghost">Fullscreen</button>
+      <button id="btnBlackout" class="ghost">Blackout 10s</button>
+    </div>
+  </header>
+
+  <aside class="panel">
+    <div class="group">
+      <h3>Mode</h3>
+      <div class="row">
+        <label for="mode">Visual mode</label>
+        <select id="mode">
+          <option value="fractal">Fractal Flow (smooth noise)</option>
+          <option value="golden">Golden Gradient (conic drift)</option>
+          <option value="interf">Wave Interference (lissajous)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="palette">Palette</label>
+        <select id="palette">
+          <option value="cool">Cool dusk</option>
+          <option value="warm">Warm ember</option>
+          <option value="sea">Seafoam</option>
+          <option value="mono">Monochrome</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="brightness">Brightness</label>
+        <input id="brightness" type="range" min="0.1" max="1.0" step="0.01" value="0.35" />
+      </div>
+      <div class="row">
+        <label for="novelty">Novelty rate</label>
+        <input id="novelty" type="range" min="0.2" max="2.0" step="0.01" value="0.9" />
+      </div>
+      <div class="row">
+        <label for="fps">CPU cap (FPS)</label>
+        <input id="fps" type="range" min="6" max="60" step="1" value="24" />
+      </div>
+      <div class="row">
+        <label class="toggle"><input id="peripheral" type="checkbox" /><span>Peripheral mode (lower contrast)</span></label>
+      </div>
+      <div class="row">
+        <label class="toggle"><input id="driftOn" type="checkbox" checked /><span>Anti-habituation drift</span></label>
+      </div>
+      <div class="hint">Tip: keep this on a second screen at low brightness to nudge attention gently.</div>
+    </div>
+
+    <div class="group">
+      <h3>Audio (optional)</h3>
+      <div class="row">
+        <label class="toggle"><input id="audioOn" type="checkbox" /><span>Enable evolving texture</span></label>
+      </div>
+      <div class="row">
+        <label for="volume">Volume</label>
+        <input id="volume" type="range" min="0" max="0.3" step="0.001" value="0.06" />
+      </div>
+      <div class="row">
+        <label for="audioNovelty">Audio novelty</label>
+        <input id="audioNovelty" type="range" min="0.2" max="2.0" step="0.01" value="0.8" />
+      </div>
+      <div class="hint">Very quiet pink-noise bed + drifting band-pass + micro pulses at irregular (golden-ratio) intervals.</div>
+    </div>
+
+    <div class="group">
+      <h3>Safety & Accessibility</h3>
+      <div class="row">
+        <label class="toggle"><input id="noFlash" type="checkbox" checked /><span>Disable fast flashes (safe)</span></label>
+      </div>
+      <div class="row">
+        <label class="toggle"><input id="respectMotion" type="checkbox" checked /><span>Respect Reduced Motion</span></label>
+      </div>
+      <div class="row">
+        <label class="toggle"><input id="autoDim" type="checkbox" /><span>Auto-dim at night (22:00–06:00)</span></label>
+      </div>
+      <div class="hint">This app avoids high-contrast strobe. Keep brightness modest if sensitive to light.</div>
+    </div>
+
+    <div class="group footer">
+      Shortcuts:
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+        <span class="kbd">S</span> start/pause
+        <span class="kbd">F</span> fullscreen
+        <span class="kbd">B</span> blackout
+        <span class="kbd">M</span> mute/unmute
+      </div>
+    </div>
+  </aside>
+
+  <main class="canvas-wrap" id="view">
+    <canvas id="c"></canvas>
+    <div class="overlay">
+      <div class="left">Created by <strong>Meaningful Path Therapy (Abdullah Al-Shoaibi)</strong></div>
+      <div class="right muted">Neural Novelty Field · v1.1 (anti-habituation)</div>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+  // ===== Utilities =====
+  const φ = (1 + Math.sqrt(5)) / 2;
+  const τ = Math.PI * 2;
+
+  const qs = sel => document.querySelector(sel);
+  const el = {
+    app: qs('#app'),
+    canvas: qs('#c'),
+    view: qs('#view'),
+    mode: qs('#mode'),
+    palette: qs('#palette'),
+    brightness: qs('#brightness'),
+    novelty: qs('#novelty'),
+    fps: qs('#fps'),
+    peripheral: qs('#peripheral'),
+    driftOn: qs('#driftOn'),
+    audioOn: qs('#audioOn'),
+    volume: qs('#volume'),
+    audioNovelty: qs('#audioNovelty'),
+    noFlash: qs('#noFlash'),
+    respectMotion: qs('#respectMotion'),
+    autoDim: qs('#autoDim'),
+    btnStart: qs('#btnStart'),
+    btnPause: qs('#btnPause'),
+    btnFullscreen: qs('#btnFullscreen'),
+    btnBlackout: qs('#btnBlackout')
+  };
+
+  // Resize canvas to device pixels
+  const ctx = el.canvas.getContext('2d');
+  function fitCanvas(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = el.view.clientWidth;
+    const h = el.view.clientHeight;
+    el.canvas.width = Math.floor(w * dpr);
+    el.canvas.height = Math.floor(h * dpr);
+    el.canvas.style.width = w + 'px';
+    el.canvas.style.height = h + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  new ResizeObserver(fitCanvas).observe(el.view);
+  window.addEventListener('orientationchange', fitCanvas);
+  fitCanvas();
+
+  // ===== Smooth noise (Simplex-ish) =====
+  function hash(x,y,t){
+    let n = Math.sin(x*127.1 + y*311.7 + t*74.7) * 43758.5453;
+    return n - Math.floor(n);
+  }
+  function smoothNoise(x,y,t){
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const s = hash(xi,yi,t);
+    const u = hash(xi+1,yi,t);
+    const v = hash(xi,yi+1,t);
+    const w = hash(xi+1,yi+1,t);
+    const i1 = s + (u - s) * xf;
+    const i2 = v + (w - v) * xf;
+    return i1 + (i2 - i1) * yf;
+  }
+  function fbm(x,y,t,oct=4){
+    let amp=0.5, freq=1.0, sum=0, norm=0;
+    for(let i=0;i<oct;i++){
+      sum += amp * smoothNoise(x*freq, y*freq, t*freq);
+      norm += amp;
+      amp *= 0.5;
+      freq *= 1.95;
+    }
+    return sum / norm;
+  }
+
+  // ===== Palettes =====
+  function lerp(a,b,t){ return a + (b-a)*t; }
+  function mixRgb(a,b,t){ return [lerp(a[0],b[0],t), lerp(a[1],b[1],t), lerp(a[2],b[2],t)]; }
+  const PALETTES = {
+    cool: [[18,24,38],[42,82,160],[110,217,255]],
+    warm: [[22,16,12],[160,90,42],[255,190,120]],
+    sea:  [[12,22,20],[36,120,110],[121,255,225]],
+    mono: [[10,14,20],[44,54,68],[180,190,205]]
+  };
+
+  // ===== State =====
+  const state = {
+    running:false,
+    t: 0,
+    lastFrame: 0,
+    targetFPS: 24,
+    blackoutUntil: 0,
+    // Anti-habituation drift (very subtle; CPU-cheap)
+    driftDepth: 0.06,     // ±6% novelty modulation
+    driftSpeedA: 1/90,    // ~1 cycle every 90 s
+    driftSpeedB: 1/150,   // ~1 cycle every 150 s (incommensurate)
+    driftSeedX: Math.random()*1000,
+    driftSeedY: Math.random()*1000
+  };
+
+  // Respect Reduced Motion
+  const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ===== Effective novelty with drift =====
+  function effectiveNovelty(){
+    const base = parseFloat(el.novelty.value);
+    if(!el.driftOn.checked) return base;
+    const tSec = state.t / 1000;
+    const d = state.driftDepth;
+    // Two slow sines at incommensurate rates
+    const mod = Math.sin(tSec*τ*state.driftSpeedA)*0.5 + Math.sin(tSec*τ*state.driftSpeedB + 1.3)*0.5;
+    const factor = 1 + d * mod; // ~±6%
+    return Math.min(2.0, Math.max(0.2, base * factor));
+  }
+
+  // Small positional/phase drift for fields (avoids exact repetition)
+  function driftOffsets(scale=0.05){
+    if(!el.driftOn.checked) return [0,0,0];
+    const tSec = state.t / 1000;
+    const dx = scale * Math.sin((tSec/60) * τ + state.driftSeedX);   // ~1 min period
+    const dy = scale * Math.sin((tSec/75) * τ * (1/φ) + state.driftSeedY);
+    const dt = scale * 0.5 * Math.sin((tSec/45) * τ + 0.7);
+    return [dx,dy,dt];
+  }
+
+  // ===== Visual renderers (original look preserved) =====
+  function drawFractalFlow(){
+    const w = el.view.clientWidth, h = el.view.clientHeight;
+    const pal = PALETTES[el.palette.value];
+    const br = parseFloat(el.brightness.value);
+    const nov = effectiveNovelty();
+    const periph = el.peripheral.checked ? 0.7 : 1.0;
+
+    const step = Math.max(6, Math.round(12 - nov*3));
+    const [dx,dy,dt] = driftOffsets(0.035); // very small
+    const t = (state.t * 0.03 * nov) + dt;
+
+    for(let y=0;y<h;y+=step){
+      for(let x=0;x<w;x+=step){
+        const nx = x / Math.min(w,h);
+        const ny = y / Math.min(w,h);
+        const f1 = fbm(nx*1.6+0.37+dx, ny*1.6-0.21+dy, t, 3);
+        const f2 = fbm(nx*0.9+13.11+dx*0.7, ny*0.9+7.21+dy*0.7, t/φ, 4);
+        const v = (f1*0.65 + f2*0.35);
+        const c1 = mixRgb(pal[0], pal[1], Math.min(1, v));
+        const c2 = mixRgb(c1, pal[2], Math.pow(v, 1.6));
+        const glow = periph * br;
+        ctx.fillStyle = `rgba(${(c2[0]*glow)|0},${(c2[1]*glow)|0},${(c2[2]*glow)|0},1)`;
+        ctx.fillRect(x,y,step,step);
+      }
+    }
+  }
+
+  function drawGoldenGradient(){
+    const w = el.view.clientWidth, h = el.view.clientHeight;
+    const pal = PALETTES[el.palette.value];
+    const br = parseFloat(el.brightness.value);
+    const nov = effectiveNovelty();
+    const periph = el.peripheral.checked ? 0.7 : 1.0;
+
+    const cx = w/2, cy = h/2;
+    const r = Math.hypot(w,h)/2;
+    const layers = 90;
+
+    // Original behaviour + tiny jitter so it never locks into a metronome
+    const tSec = state.t / 1000;
+    const micro = el.driftOn.checked ? 0.02*Math.sin(tSec*0.05) : 0; // ~very slow ±0.02 rad/s
+    const baseAng = state.t * 0.0007 * 1000 * nov + micro;
+
+    for(let i=0;i<layers;i++){
+      const tt = i / (layers-1);
+      const c1 = mixRgb(pal[0], pal[1], tt);
+      const c2 = mixRgb(c1, pal[2], 0.35 + 0.65*(Math.sin(tt*τ*φ)*0.5+0.5));
+      const glow = (periph * br) * (0.6 + 0.4*tt);
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      const a0 = baseAng + tt*τ;
+      const a1 = a0 + (τ/layers)*(1.05 + 0.1*Math.sin(state.t*0.00013 + tt*7));
+      ctx.arc(cx,cy,r,a0,a1,false);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${(c2[0]*glow)|0},${(c2[1]*glow)|0},${(c2[2]*glow)|0},0.85)`;
+      ctx.fill();
+    }
+    const grd = ctx.createRadialGradient(cx,cy,0,cx,cy,r);
+    grd.addColorStop(0, `rgba(0,0,0,${0.4*(1-br)})`);
+    grd.addColorStop(1, `rgba(0,0,0,0)`);
+    ctx.fillStyle = grd;
+    ctx.fillRect(0,0,w,h);
+  }
+
+  function drawInterference(){
+    const w = el.view.clientWidth, h = el.view.clientHeight;
+    const pal = PALETTES[el.palette.value];
+    const br = parseFloat(el.brightness.value);
+    const nov = effectiveNovelty();
+    const periph = el.peripheral.checked ? 0.7 : 1.0;
+
+    const step = Math.max(4, Math.round(10 - nov*2));
+    const [dx,dy,dt] = driftOffsets(0.03);
+    const t = (state.t * 0.0011 * nov) + dt;
+
+    // Very mild frequency drift to avoid stationary moiré
+    const fA = 1.1 * (1 + (el.driftOn.checked ? 0.02*Math.sin(t*0.17) : 0));
+    const fB = (φ * 0.73) * (1 + (el.driftOn.checked ? 0.018*Math.sin(t*0.11 + 0.6) : 0));
+    const fC = (φ*φ * 0.37) * (1 + (el.driftOn.checked ? 0.016*Math.sin(t*0.09 + 1.1) : 0));
+
+    for(let y=0;y<h;y+=step){
+      for(let x=0;x<w;x+=step){
+        const nx = (x - w/2)/Math.min(w,h);
+        const ny = (y - h/2)/Math.min(w,h);
+        const r = Math.hypot(nx,ny);
+        const a = Math.atan2(ny,nx);
+        const v =
+          Math.sin( ((nx+dx)*7 + (ny+dy)*3)*fA + t*1.3 )*0.33 +
+          Math.sin( (r*9 - a*3)*fB + t*0.8 )*0.33 +
+          Math.sin( ((nx+dx*0.7)*4 - (ny+dy*0.7)*6)*fC + t*1.7 )*0.34;
+        const u = (v*0.5 + 0.5);
+        const c1 = mixRgb(pal[0], pal[1], u);
+        const c2 = mixRgb(c1, pal[2], Math.pow(u,1.5));
+        const glow = periph * br;
+        ctx.fillStyle = `rgba(${(c2[0]*glow)|0},${(c2[1]*glow)|0},${(c2[2]*glow)|0},1)`;
+        ctx.fillRect(x,y,step,step);
+      }
+    }
+  }
+
+  function render(){
+    const w = el.view.clientWidth, h = el.view.clientHeight;
+    ctx.clearRect(0,0,w,h);
+
+    if(el.autoDim.checked){
+      const hr = new Date().getHours();
+      if(hr >= 22 || hr < 6){
+        const cur = parseFloat(el.brightness.value);
+        const target = Math.min(cur, 0.25);
+        if(cur !== target) el.brightness.value = String(target);
+      }
+    }
+
+    if(Date.now() < state.blackoutUntil){
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0,0,w,h);
+      return;
+    }
+
+    const mode = el.mode.value;
+    if(mode === 'fractal') drawFractalFlow();
+    else if(mode === 'golden') drawGoldenGradient();
+    else drawInterference();
+
+    if(el.peripheral.checked){
+      const grd = ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*0.2,w/2,h/2,Math.hypot(w,h)*0.6);
+      grd.addColorStop(0, 'rgba(0,0,0,0)');
+      grd.addColorStop(1, 'rgba(0,0,0,0.25)');
+      ctx.fillStyle = grd; ctx.fillRect(0,0,w,h);
+    }
+  }
+
+  // ===== Loop with FPS cap (unchanged structure) =====
+  function loop(ts){
+    if(!state.running){ state.lastFrame = ts; requestAnimationFrame(loop); return; }
+    const target = 1000 / state.targetFPS;
+    if(ts - state.lastFrame >= target){
+      const dt = ts - state.lastFrame;
+      state.lastFrame = ts;
+      state.t += dt;
+      render();
+      audioTick();
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ===== Audio engine (unchanged) =====
+  let AC = null, gMaster = null, noiseSrc = null, bpFilter = null, lpFilter = null, pulseGain = null, mute = true;
+  let nextPulseAt = 0;
+
+  function initAudio(){
+    if(AC) return;
+    AC = new (window.AudioContext || window.webkitAudioContext)({latencyHint:'playback'});
+    gMaster = AC.createGain(); gMaster.gain.value = parseFloat(el.volume.value);
+    const buffer = AC.createBuffer(1, AC.sampleRate * 2, AC.sampleRate);
+    const data = buffer.getChannelData(0);
+    let b0=0,b1=0,b2=0;
+    for(let i=0;i<data.length;i++){
+      const white = Math.random()*2-1;
+      b0 = 0.99765*b0 + white*0.0990460;
+      b1 = 0.96300*b1 + white*0.2965164;
+      b2 = 0.57000*b2 + white*1.0526913;
+      data[i] = (b0 + b1 + b2 + white*0.1848) * 0.05;
+    }
+    noiseSrc = AC.createBufferSource();
+    noiseSrc.buffer = buffer; noiseSrc.loop = true;
+
+    bpFilter = AC.createBiquadFilter(); bpFilter.type = 'bandpass'; bpFilter.Q.value = 0.6;
+    lpFilter = AC.createBiquadFilter(); lpFilter.type = 'lowpass'; lpFilter.frequency.value = 6000;
+
+    pulseGain = AC.createGain(); pulseGain.gain.value = 0.0;
+
+    noiseSrc.connect(bpFilter);
+    bpFilter.connect(lpFilter);
+    lpFilter.connect(gMaster);
+    pulseGain.connect(gMaster);
+    gMaster.connect(AC.destination);
+
+    noiseSrc.start();
+  }
+
+  function setAudioOn(on){
+    if(on){
+      initAudio();
+      mute = false;
+      if(AC.state === 'suspended') AC.resume();
+      gMaster.gain.setTargetAtTime(parseFloat(el.volume.value), AC.currentTime, 0.25);
+    }else{
+      if(!AC) return;
+      mute = true;
+      gMaster.gain.setTargetAtTime(0.0001, AC.currentTime, 0.25);
+    }
+  }
+
+  function audioTick(){
+    if(!AC || mute) return;
+    const n = parseFloat(el.audioNovelty.value);
+    const t = AC.currentTime;
+
+    const lfoA = 0.05 * n;
+    const lfoB = (0.05/φ) * n;
+    const centre = 400 + 300 * Math.sin(t * lfoA*τ) + 220 * Math.sin(t * lfoB*τ + 1.3);
+    const q = 0.5 + 0.4 * (0.5 + 0.5*Math.sin(t * (0.03/φ) * τ + 2.1));
+    bpFilter.frequency.setTargetAtTime(Math.max(80, centre), t, 0.4);
+    bpFilter.Q.setTargetAtTime(q, t, 0.6);
+
+    if(t >= nextPulseAt){
+      const osc = AC.createOscillator();
+      const gain = AC.createGain();
+      osc.type = 'sine';
+      const base = 220 * φ;
+      osc.frequency.value = base * (1 + 0.03*(Math.random()*2-1));
+      gain.gain.value = 0.0;
+      const dur = 0.18 + Math.random()*0.15;
+      const now = AC.currentTime;
+      gain.gain.setValueAtTime(0.0, now);
+      gain.gain.linearRampToValueAtTime(0.006 * parseFloat(el.volume.value)/0.06, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      osc.connect(gain); gain.connect(pulseGain);
+      osc.start(now); osc.stop(now + dur + 0.02);
+
+      const baseGap = (0.8 + Math.random()*1.4) / (0.6 + n*0.7);
+      nextPulseAt = t + baseGap * (φ - (Math.random()*0.2));
+    }
+  }
+
+  // ===== Controls =====
+  function start(){
+    state.running = true;
+    el.btnStart.disabled = true;
+    el.btnPause.disabled = false;
+  }
+  function pause(){
+    state.running = false;
+    el.btnStart.disabled = false;
+    el.btnPause.disabled = true;
+  }
+
+  async function fullscreen(){
+    try{
+      if(!document.fullscreenElement){
+        await el.app.requestFullscreen({navigationUI:"hide"});
+        el.app.classList.add('immersive');
+      }else{
+        await document.exitFullscreen();
+      }
+    }catch(e){}
+  }
+
+  function blackout(){
+    state.blackoutUntil = Date.now() + 10000;
+  }
+
+  document.addEventListener('fullscreenchange', ()=>{
+    el.app.classList.toggle('immersive', !!document.fullscreenElement);
+  });
+
+  el.btnStart.addEventListener('click', start);
+  el.btnPause.addEventListener('click', pause);
+  el.btnFullscreen.addEventListener('click', fullscreen);
+  el.btnBlackout.addEventListener('click', blackout);
+
+  el.fps.addEventListener('input', e=>{
+    state.targetFPS = parseInt(e.target.value,10);
+  });
+
+  if(el.respectMotion.checked && prefersReduced){
+    el.fps.value = "12";
+    state.targetFPS = 12;
+    el.novelty.value = "0.6";
+  }
+
+  el.audioOn.addEventListener('change', e=>{ setAudioOn(e.target.checked); });
+  el.volume.addEventListener('input', e=>{
+    if(AC && gMaster) gMaster.gain.setTargetAtTime(parseFloat(e.target.value), AC.currentTime, 0.15);
+  });
+
+  window.addEventListener('keydown', (ev)=>{
+    if(ev.target && ['INPUT','SELECT','TEXTAREA'].includes(ev.target.tagName)) return;
+    if(ev.key.toLowerCase()==='s'){ state.running ? pause() : start(); }
+    if(ev.key.toLowerCase()==='f'){ fullscreen(); }
+    if(ev.key.toLowerCase()==='b'){ blackout(); }
+    if(ev.key.toLowerCase()==='m'){ el.audioOn.checked = !el.audioOn.checked; setAudioOn(el.audioOn.checked); }
+  });
+
+  // Start paused
+  pause();
+})();
+</script>
+</body>
+</html>
