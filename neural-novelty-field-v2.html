@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
+<title>Neural Novelty Field</title>
+<meta name="theme-color" content="#030810"/>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --fg:     #ddeeff;
+  --muted:  #4e6880;
+  --ok:     #68e8c8;
+  --panel:  rgba(4,10,18,0.90);
+  --border: rgba(100,180,255,0.10);
+  --font-d: 'Cormorant Garamond', Georgia, serif;
+  --font-b: 'DM Sans', system-ui, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: #030810; overflow: hidden;
+  font-family: var(--font-b);
+  user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#c {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%; display: block;
+  opacity: 0; transition: opacity 2s ease;
+}
+#c.ready { opacity: 1; }
+
+/* ── UI Layer ────────────────────────────────────────────────── */
+#ui {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none; z-index: 10;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────── */
+#top {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: max(20px,env(safe-area-inset-top)) 18px 0;
+  opacity: 0; transition: opacity 0.55s ease;
+  pointer-events: none;
+}
+#top.on { opacity: 1; pointer-events: auto; }
+.wordmark {
+  font-family: var(--font-d); font-size: 0.95rem;
+  font-weight: 300; font-style: italic;
+  color: rgba(180,215,255,0.45); letter-spacing: 0.05em;
+}
+.top-icons { display: flex; gap: 6px; }
+
+/* ── Bottom controls ─────────────────────────────────────────── */
+#controls {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; flex-wrap: wrap;
+  padding: 0 16px max(22px,calc(env(safe-area-inset-bottom)+14px));
+  opacity: 0; transition: opacity 0.55s ease;
+  pointer-events: none;
+}
+#controls.on { opacity: 1; pointer-events: auto; }
+
+.ctrl-pill {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 99px; padding: 7px 13px;
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 4px 22px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.03) inset;
+}
+.ctrl-sep { width: 1px; height: 16px; background: var(--border); margin: 0 1px; }
+
+/* Palette dots */
+.pdot {
+  width: 20px; height: 20px; border-radius: 50%;
+  cursor: pointer; border: 2px solid transparent;
+  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+  flex-shrink: 0;
+}
+.pdot.on {
+  border-color: rgba(255,255,255,0.75);
+  transform: scale(1.25);
+  box-shadow: 0 0 10px rgba(255,255,255,0.2);
+}
+
+/* Novelty pills */
+.nvpill {
+  font-size: 0.72rem; color: var(--muted); cursor: pointer;
+  padding: 3px 9px; border-radius: 99px;
+  border: 1px solid transparent;
+  transition: all 0.2s; white-space: nowrap;
+}
+.nvpill.on {
+  color: var(--ok);
+  border-color: rgba(104,232,200,0.28);
+  background: rgba(104,232,200,0.07);
+}
+
+/* Icon buttons */
+.ibtn {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+.ibtn:hover, .ibtn.on { color: var(--fg); }
+
+/* ── Modals ──────────────────────────────────────────────────── */
+.modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0,0,0,0.78);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  display: grid; place-items: center; padding: 20px;
+  opacity: 0; pointer-events: none; transition: opacity 0.34s ease;
+}
+.modal.open  { opacity: 1; pointer-events: auto; }
+.modal.hidden { display: none !important; }
+
+.card {
+  background: #070f1a; border: 1px solid var(--border);
+  border-radius: 26px; padding: 28px;
+  width: 100%; max-width: 420px;
+  box-shadow: 0 28px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.025);
+  transform: translateY(22px) scale(0.97);
+  transition: transform 0.36s cubic-bezier(0.22,0.9,0.22,1.08);
+}
+.modal.open .card { transform: none; }
+.card h2 {
+  font-family: var(--font-d); font-size: 1.65rem; font-weight: 400;
+  margin: 0 0 5px; color: var(--fg);
+}
+.card-sub { color: var(--muted); font-size: 0.77rem; margin-bottom: 22px; letter-spacing: 0.04em; }
+.card p { color: var(--muted); font-size: 0.91rem; line-height: 1.7; margin-bottom: 14px; font-weight: 300; }
+.card p em { font-style: italic; color: rgba(190,220,255,0.72); font-family: var(--font-d); font-size: 1.02rem; }
+.card p strong { color: #c8ddf0; font-weight: 400; }
+
+/* Sliders */
+.sg { margin-bottom: 18px; }
+.sg-lbl {
+  display: flex; justify-content: space-between;
+  font-size: 0.73rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 9px;
+}
+.sg-lbl span { color: var(--fg); text-transform: none; letter-spacing: 0; font-size: 0.87rem; }
+input[type="range"] {
+  width: 100%; height: 3px; -webkit-appearance: none; appearance: none;
+  background: rgba(255,255,255,0.07); border-radius: 99px; outline: none; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--fg); cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; border: none;
+  background: var(--fg); cursor: pointer;
+}
+
+/* Toggles */
+.tog-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.tog-info .tog-title { font-size: 0.88rem; color: var(--fg); }
+.tog-info .tog-desc  { font-size: 0.73rem; color: var(--muted); margin-top: 2px; font-weight: 300; }
+.tog { position: relative; width: 44px; height: 26px; flex-shrink: 0; margin-left: 14px; }
+.tog input { opacity: 0; width: 0; height: 0; position: absolute; }
+.tog-track {
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.07); border: 1px solid var(--border);
+  border-radius: 99px; cursor: pointer;
+  transition: background 0.22s, border-color 0.22s;
+}
+.tog-track::after {
+  content: ''; position: absolute; left: 3px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; border-radius: 50%; background: var(--muted);
+  transition: transform 0.22s, background 0.22s;
+}
+.tog input:checked + .tog-track { background: rgba(104,232,200,0.17); border-color: rgba(104,232,200,0.38); }
+.tog input:checked + .tog-track::after { transform: translate(18px,-50%); background: var(--ok); }
+
+/* Buttons */
+.btn {
+  background: var(--panel); border: 1px solid var(--border);
+  color: var(--fg); padding: 11px 20px; border-radius: 99px;
+  font-family: var(--font-b); font-size: 0.87rem; font-weight: 400;
+  cursor: pointer; transition: transform 0.1s, background 0.2s;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.btn:active { transform: scale(0.95); }
+.btn.primary { background: rgba(104,232,200,0.09); border-color: rgba(104,232,200,0.28); color: var(--ok); }
+.btn.full { width: 100%; }
+.card-footer { display: flex; gap: 10px; margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border); }
+
+/* No-WebGL */
+#no-gl {
+  position: fixed; inset: 0; display: none; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; padding: 40px;
+}
+#no-gl.show { display: flex; }
+#no-gl h2 { font-family: var(--font-d); font-size: 1.9rem; font-weight: 300; margin-bottom: 14px; }
+#no-gl p  { color: var(--muted); max-width: 300px; line-height: 1.65; }
+
+/* Credit */
+.credit {
+  position: fixed; bottom: max(12px,env(safe-area-inset-bottom));
+  right: 16px; z-index: 5; pointer-events: none;
+  font-size: 0.63rem; color: rgba(60,90,120,0.4); font-weight: 300;
+}
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+<div id="no-gl"><h2>WebGL needed</h2><p>Please open in a modern browser — Chrome, Firefox, or Safari.</p></div>
+
+<div id="ui">
+  <!-- Top bar -->
+  <div id="top">
+    <div class="wordmark">Neural Novelty Field</div>
+    <div class="top-icons">
+      <div class="ibtn" id="btn-info" title="About">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/>
+        </svg>
+      </div>
+      <div class="ibtn" id="btn-settings" title="Settings">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 2.82 1.17l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom controls -->
+  <div id="controls">
+    <!-- Palettes -->
+    <div class="ctrl-pill">
+      <div class="pdot on" data-pal="abyssal" title="Abyssal"
+           style="background:radial-gradient(circle at 35% 35%,#14d4c0,#051840)"></div>
+      <div class="pdot" data-pal="ember" title="Ember"
+           style="background:radial-gradient(circle at 35% 35%,#ff8c36,#200808)"></div>
+      <div class="pdot" data-pal="verdant" title="Verdant"
+           style="background:radial-gradient(circle at 35% 35%,#44e880,#041808)"></div>
+      <div class="pdot" data-pal="aurora" title="Aurora"
+           style="background:radial-gradient(circle at 35% 35%,#c464ff,#10042a)"></div>
+    </div>
+    <!-- Novelty level -->
+    <div class="ctrl-pill">
+      <span class="nvpill"    data-nv="0.45">Gentle</span>
+      <span class="nvpill on" data-nv="0.90">Flowing</span>
+      <span class="nvpill"    data-nv="1.65">Vivid</span>
+    </div>
+    <!-- Audio -->
+    <div class="ctrl-pill">
+      <div class="ibtn" id="btn-audio" title="Toggle audio">
+        <svg id="ico-off" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
+        </svg>
+        <svg id="ico-on" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="display:none">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- INFO MODAL -->
+<div id="modal-info" class="modal hidden">
+  <div class="card">
+    <h2>Neural Novelty Field</h2>
+    <div class="card-sub">Ambient DMN interruption</div>
+    <p>The default mode network — the part of the mind that activates between tasks — is the engine of rumination. It feeds on <em>predictability and stillness</em>.</p>
+    <p>This field provides <strong>gentle, layered, unpredictable variation</strong> that softly occupies the attention without demanding it. Three independent visual rhythms drift at irrational timescales — the brain's novelty detection registers each small change and briefly interrupts the ruminative loop.</p>
+    <p>Let your gaze rest here, or let it sit at the edge of your vision. You don't need to watch, track, or understand anything. <em>The field does its work quietly.</em></p>
+    <button class="btn primary full" id="close-info" style="margin-top:6px;">Begin</button>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div id="modal-settings" class="modal hidden">
+  <div class="card">
+    <h2>Settings</h2>
+    <div class="card-sub">Adjust to your environment</div>
+
+    <div class="sg">
+      <div class="sg-lbl">Brightness <span id="lbl-br">72%</span></div>
+      <input type="range" id="sl-br" min="5" max="100" step="1" value="72"/>
+    </div>
+    <div class="sg">
+      <div class="sg-lbl">Audio volume <span id="lbl-vol">Off</span></div>
+      <input type="range" id="sl-vol" min="0" max="100" step="1" value="0"/>
+    </div>
+
+    <div class="tog-row">
+      <div class="tog-info">
+        <div class="tog-title">Anti-habituation blooms</div>
+        <div class="tog-desc">Occasional subtle field events prevent the brain adapting</div>
+      </div>
+      <label class="tog"><input type="checkbox" id="tog-blooms" checked><div class="tog-track"></div></label>
+    </div>
+    <div class="tog-row">
+      <div class="tog-info">
+        <div class="tog-title">Peripheral mode</div>
+        <div class="tog-desc">Dims the centre — ideal as a background field on a second screen</div>
+      </div>
+      <label class="tog"><input type="checkbox" id="tog-periph"><div class="tog-track"></div></label>
+    </div>
+    <div class="tog-row">
+      <div class="tog-info">
+        <div class="tog-title">Reduced motion</div>
+        <div class="tog-desc">Slower drift — for light sensitivity or a calmer session</div>
+      </div>
+      <label class="tog"><input type="checkbox" id="tog-slow"><div class="tog-track"></div></label>
+    </div>
+
+    <div class="card-footer">
+      <button class="btn" id="btn-dl" style="flex:1;font-size:0.8rem;">
+        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Save file
+      </button>
+      <button class="btn primary" id="close-settings" style="flex:2;">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="credit">Meaningful Path Therapy · Abdullah Al-Shoaibi</div>
+
+<script>
+(() => {
+'use strict';
+
+// ── WebGL init ─────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl', { antialias: false, alpha: false, depth: false })
+         || canvas.getContext('experimental-webgl');
+
+if (!gl) { document.getElementById('no-gl').classList.add('show'); return; }
+
+// ── Shaders ────────────────────────────────────────────────────────────────
+const VS = `
+  attribute vec2 a_pos;
+  void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const FS = `
+  precision highp float;
+
+  uniform float u_time;
+  uniform vec2  u_res;
+  uniform float u_novelty;
+  uniform float u_brightness;
+  uniform float u_speed;
+  uniform float u_periph;
+  uniform vec2  u_drift;
+  uniform vec3  u_bloom;   /* xy = aspect-corrected pos, z = 0..1 strength */
+  uniform vec3  u_pal0;
+  uniform vec3  u_pal1;
+  uniform vec3  u_pal2;
+
+  const float PHI = 1.6180339887;
+
+  /* ── Fast value noise ── */
+  float h21(vec2 p) {
+    p = fract(p * vec2(127.1, 311.7));
+    p += dot(p, p.yx + 45.32);
+    return fract(p.x * p.y);
+  }
+  float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(h21(i),             h21(i + vec2(1,0)), u.x),
+      mix(h21(i + vec2(0,1)), h21(i + vec2(1,1)), u.x),
+      u.y
+    );
+  }
+
+  /*
+   * Domain-warped FBM — the mat2 rotation prevents grid alignment
+   * and creates genuinely organic, non-repeating structure.
+   * Three calls at PHI-ratio speeds means the fields NEVER
+   * constructively reinforce within any human timescale.
+   */
+  float fbm(vec2 p, float t) {
+    float v = 0.0, a = 0.5;
+    /* Rotate-and-scale matrix — keeps octaves from aligning */
+    mat2 R = mat2(1.8, 1.2, -1.2, 1.8);
+    for (int i = 0; i < 4; i++) {
+      v += a * vnoise(p + vec2(t * 0.71, t * 0.59));
+      p  = R * p;
+      t *= 1.89;
+      a *= 0.50;
+    }
+    return v;
+  }
+
+  vec3 palmap(float v) {
+    vec3 c = mix(u_pal0, u_pal1, smoothstep(0.0, 0.58, v));
+    return mix(c, u_pal2, smoothstep(0.44, 1.0, v));
+  }
+
+  void main() {
+    vec2 uv = gl_FragCoord.xy / u_res;
+    vec2 p  = uv - 0.5;
+    p.x    *= u_res.x / u_res.y;   /* aspect-correct */
+
+    float t  = u_time * u_speed * u_novelty;
+
+    /* Three overlapping fields — frequency ratios are all irrational */
+    float f1 = fbm(p * 1.80 + u_drift,                     t * 1.0);
+    float f2 = fbm(p * 1.12 + u_drift * PHI + vec2(13.7, 7.4),  t / PHI);
+    float f3 = fbm(p * 2.55 + u_drift / PHI + vec2(31.0, 23.1), t * PHI * PHI);
+
+    float v = f1 * 0.50 + f2 * 0.32 + f3 * 0.18;
+
+    /* Bloom event — gaussian soft glow at a random position */
+    if (u_bloom.z > 0.002) {
+      float bd = length(p - u_bloom.xy);
+      v += u_bloom.z * exp(-bd * bd * 3.0) * 0.85;
+    }
+
+    v = clamp(v, 0.0, 1.0);
+    /* Push the value curve so the field spends more time in the bright range */
+    v = pow(v, 0.72);
+
+    vec3 col = palmap(v);
+    col     *= u_brightness;
+
+    /* Vignette — soft, doesn't swallow the field */
+    float vig = smoothstep(0.95, 0.30, length(uv - 0.5) * 1.30);
+    col      *= vig;
+
+    /* Peripheral mode: dim centre, leave edges brighter */
+    if (u_periph > 0.5) {
+      float pd = smoothstep(0.0, 0.46, length(uv - 0.5));
+      col *= 0.28 + 0.72 * pd;
+    }
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+function compileShader(type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    console.error('Shader:', gl.getShaderInfoLog(sh)); return null;
+  }
+  return sh;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  console.error('Link:', gl.getProgramInfoLog(prog)); return;
+}
+gl.useProgram(prog);
+
+// Fullscreen quad
+const vBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+// Uniform locations
+const U = {};
+['u_time','u_novelty','u_brightness','u_speed','u_periph'].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+['u_res','u_drift','u_bloom','u_pal0','u_pal1','u_pal2'].forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+// ── Palettes ───────────────────────────────────────────────────────────────
+// Each: [dark base, mid glow, bright peak] — all normalised 0..1
+const PALS = {
+  abyssal: [[0.00, 0.05,  0.20 ], [0.00, 0.55, 0.72 ], [0.50, 1.00, 0.95]],
+  ember:   [[0.14, 0.04,  0.01 ], [0.80, 0.30, 0.04 ], [1.00, 0.78, 0.30]],
+  verdant: [[0.02, 0.12,  0.04 ], [0.08, 0.65, 0.30 ], [0.42, 1.00, 0.58]],
+  aurora:  [[0.08, 0.02,  0.22 ], [0.58, 0.14, 0.88 ], [0.90, 0.68, 1.00]],
+};
+
+// ── Config ─────────────────────────────────────────────────────────────────
+const cfg = {
+  palette:    'abyssal',
+  novelty:    0.90,
+  brightness: 0.72,
+  volume:     0,
+  blooms:     true,
+  periph:     false,
+  slow:       false,
+  audioOn:    false,
+};
+
+// ── Anti-habituation state ─────────────────────────────────────────────────
+/*
+ * THREE independent novelty timescales — none are in rational ratio,
+ * so they never synchronise and the brain cannot build a stable prediction:
+ *
+ *  1. BLOOM EVENTS   12–48 s  — soft localised glow, random position
+ *  2. SPEED PULSES   22–75 s  — brief acceleration or deceleration of field flow
+ *  3. FIELD DRIFT    continuous — seed position in noise space evolves slowly
+ *     FIELD RESET   3–8 min  — smooth teleport of drift seed (visible reorganisation)
+ */
+const PHI = 1.6180339887;
+function rnd(a, b) { return a + Math.random() * (b - a); }
+
+let drift      = [rnd(0, 8), rnd(0, 8)];
+let bloomPos   = [0, 0];
+let bloomStr   = 0.0;      // actual current strength (smoothly interpolated)
+let bloomTgt   = 0.0;      // target strength
+let speedMod   = 1.0;
+let speedTgt   = 1.0;
+
+const now = () => performance.now();
+let T0 = now();
+
+let nextBloom  = now() + rnd(8000,  40000);
+let nextSpeed  = now() + rnd(20000, 65000);
+let nextField  = now() + rnd(180000, 440000);
+
+// ── Resize ─────────────────────────────────────────────────────────────────
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width  = Math.round(window.innerWidth  * dpr);
+  canvas.height = Math.round(window.innerHeight * dpr);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ── Main loop ──────────────────────────────────────────────────────────────
+let prevT = now();
+
+function loop() {
+  const t   = now();
+  const dt  = Math.min((t - prevT) / 1000, 0.1); // clamp dt to avoid jumps
+  prevT = t;
+  const tSec = (t - T0) / 1000;
+
+  // ── Drift evolution (continuous, irrational frequencies) ──
+  drift[0] += dt * 0.009 * Math.sin(tSec * 0.0068 * PHI);
+  drift[1] += dt * 0.009 * Math.cos(tSec * 0.0052 / PHI + 1.4);
+
+  // ── Speed modulation (smooth interpolation) ──
+  speedMod += (speedTgt - speedMod) * 0.025;
+
+  // ── Bloom strength (smooth fade in/out) ──
+  bloomStr += (bloomTgt - bloomStr) * 0.045;
+
+  // ── Event dispatch ──
+  if (cfg.blooms && t >= nextBloom) {
+    const asp = canvas.width / canvas.height;
+    bloomPos = [(Math.random()-0.5) * 0.88 * asp, (Math.random()-0.5) * 0.66];
+    bloomTgt = 0.80 + Math.random() * 0.20;
+    setTimeout(() => { bloomTgt = 0.0; }, rnd(700, 2000));
+    nextBloom = t + rnd(10000, 44000);
+  }
+
+  if (t >= nextSpeed) {
+    speedTgt = Math.random() < 0.55
+      ? 1.0 + rnd(0.4, 0.9)   // acceleration burst
+      : rnd(0.35, 0.65);       // slow-down
+    setTimeout(() => { speedTgt = 1.0; }, rnd(2800, 8500));
+    nextSpeed = t + rnd(20000, 68000);
+  }
+
+  // Field reorganisation — smooth drift seed shift
+  if (t >= nextField) {
+    const tx = rnd(0, 18), ty = rnd(0, 18);
+    let s = 0;
+    const STEPS = 160;
+    const iv = setInterval(() => {
+      s++;
+      drift[0] += (tx - drift[0]) * 0.06;
+      drift[1] += (ty - drift[1]) * 0.06;
+      if (s >= STEPS) clearInterval(iv);
+    }, 80);
+    nextField = t + rnd(160000, 400000);
+  }
+
+  // ── Set uniforms ──
+  const pal  = PALS[cfg.palette];
+  const spd  = (cfg.slow ? 0.36 : 1.0) * speedMod;
+  const br   = cfg.brightness;
+
+  gl.uniform1f(U.u_time,        tSec);
+  gl.uniform2f(U.u_res,         canvas.width, canvas.height);
+  gl.uniform1f(U.u_novelty,     cfg.novelty);
+  gl.uniform1f(U.u_brightness,  br);
+  gl.uniform1f(U.u_speed,       spd);
+  gl.uniform1f(U.u_periph,      cfg.periph ? 1.0 : 0.0);
+  gl.uniform2f(U.u_drift,       drift[0], drift[1]);
+  gl.uniform3f(U.u_bloom,       bloomPos[0], bloomPos[1], bloomStr);
+  gl.uniform3f(U.u_pal0,        pal[0][0], pal[0][1], pal[0][2]);
+  gl.uniform3f(U.u_pal1,        pal[1][0], pal[1][1], pal[1][2]);
+  gl.uniform3f(U.u_pal2,        pal[2][0], pal[2][1], pal[2][2]);
+
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  audioTick(tSec);
+
+  requestAnimationFrame(loop);
+}
+
+// Fade canvas in after first frame
+requestAnimationFrame(() => {
+  loop();
+  setTimeout(() => canvas.classList.add('ready'), 80);
+});
+
+// ── Audio engine ───────────────────────────────────────────────────────────
+/*
+ * Pink noise bed + drifting band-pass at phi-ratio LFO speeds
+ * + micro-pulses at golden-ratio-spaced intervals.
+ * All frequencies irrational relative to each other.
+ */
+let AC = null, gMaster = null, bpf = null, nextPulse = 0;
+
+function initAudio() {
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
+
+  // Pink noise — 2s looped buffer
+  const buf = AC.createBuffer(1, AC.sampleRate * 2, AC.sampleRate);
+  const d   = buf.getChannelData(0);
+  let b0=0, b1=0, b2=0;
+  for (let i = 0; i < d.length; i++) {
+    const w = Math.random()*2-1;
+    b0 = 0.99765*b0 + w*0.0990460;
+    b1 = 0.96300*b1 + w*0.2965164;
+    b2 = 0.57000*b2 + w*1.0526913;
+    d[i] = (b0 + b1 + b2 + w*0.1848) * 0.04;
+  }
+  const ns = AC.createBufferSource();
+  ns.buffer = buf; ns.loop = true;
+
+  bpf = AC.createBiquadFilter();
+  bpf.type = 'bandpass'; bpf.frequency.value = 440; bpf.Q.value = 0.55;
+
+  const lpf = AC.createBiquadFilter();
+  lpf.type = 'lowpass'; lpf.frequency.value = 5500;
+
+  gMaster = AC.createGain(); gMaster.gain.value = 0.001;
+  ns.connect(bpf); bpf.connect(lpf); lpf.connect(gMaster); gMaster.connect(AC.destination);
+  ns.start();
+}
+
+function audioTick(t) {
+  if (!AC || !cfg.audioOn) return;
+  if (AC.state === 'suspended') AC.resume();
+
+  // Bandpass drifts at two irrational LFO rates
+  const ctr = 360 + 280 * Math.sin(t * 0.044 * Math.PI * 2)
+                  + 130 * Math.sin(t * (0.044/PHI) * Math.PI * 2 + 1.18);
+  bpf.frequency.setTargetAtTime(Math.max(90, ctr), AC.currentTime, 0.55);
+  bpf.Q.setTargetAtTime(
+    0.42 + 0.34 * (Math.sin(t * 0.028 * Math.PI * 2) * 0.5 + 0.5),
+    AC.currentTime, 0.75
+  );
+
+  // Micro-pulse at phi-spaced intervals
+  if (t >= nextPulse) {
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'sine';
+    o.frequency.value = 220 * PHI * (1 + 0.022*(Math.random()*2-1));
+    const ct = AC.currentTime;
+    const dur = 0.17 + Math.random() * 0.13;
+    const vol = 0.005 * (cfg.volume / 40);
+    g.gain.setValueAtTime(0.001, ct);
+    g.gain.linearRampToValueAtTime(vol, ct + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, ct + dur);
+    o.connect(g); g.connect(gMaster);
+    o.start(ct); o.stop(ct + dur + 0.02);
+    nextPulse = t + (0.85 + Math.random()*1.3) / (0.5 + cfg.novelty*0.65) * (PHI - Math.random()*0.18);
+  }
+}
+
+function setAudioOn(on) {
+  cfg.audioOn = on;
+  if (on) {
+    initAudio();
+    if (AC.state === 'suspended') AC.resume();
+    gMaster.gain.setTargetAtTime(cfg.volume / 280, AC.currentTime, 0.5);
+  } else {
+    if (gMaster) gMaster.gain.setTargetAtTime(0.001, AC.currentTime, 0.5);
+  }
+}
+
+// ── Auto-hide UI ───────────────────────────────────────────────────────────
+let hideTimer;
+function showUI() {
+  document.getElementById('top').classList.add('on');
+  document.getElementById('controls').classList.add('on');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    document.getElementById('top').classList.remove('on');
+    document.getElementById('controls').classList.remove('on');
+  }, 3800);
+}
+window.addEventListener('mousemove', showUI, { passive: true });
+window.addEventListener('touchstart', showUI, { passive: true });
+showUI();
+
+// ── Modals ─────────────────────────────────────────────────────────────────
+function openModal(id) {
+  const m = document.getElementById('modal-'+id);
+  m.classList.remove('hidden');
+  requestAnimationFrame(() => m.classList.add('open'));
+}
+function closeModal(id) {
+  const m = document.getElementById('modal-'+id);
+  m.classList.remove('open');
+  setTimeout(() => m.classList.add('hidden'), 360);
+}
+
+document.getElementById('btn-info').onclick     = () => openModal('info');
+document.getElementById('btn-settings').onclick = () => openModal('settings');
+document.getElementById('close-info').onclick   = () => closeModal('info');
+document.getElementById('close-settings').onclick = () => closeModal('settings');
+
+// ── Palette ────────────────────────────────────────────────────────────────
+document.querySelectorAll('.pdot').forEach(d => {
+  d.onclick = () => {
+    document.querySelectorAll('.pdot').forEach(x => x.classList.remove('on'));
+    d.classList.add('on'); cfg.palette = d.dataset.pal;
+  };
+});
+
+// ── Novelty pills ──────────────────────────────────────────────────────────
+document.querySelectorAll('.nvpill').forEach(p => {
+  p.onclick = () => {
+    document.querySelectorAll('.nvpill').forEach(x => x.classList.remove('on'));
+    p.classList.add('on'); cfg.novelty = parseFloat(p.dataset.nv);
+  };
+});
+
+// ── Audio toggle ───────────────────────────────────────────────────────────
+document.getElementById('btn-audio').onclick = () => {
+  const on = !cfg.audioOn;
+  document.getElementById('ico-off').style.display = on  ? 'none'  : 'block';
+  document.getElementById('ico-on').style.display  = on  ? 'block' : 'none';
+  document.getElementById('btn-audio').classList.toggle('on', on);
+  setAudioOn(on);
+};
+
+// ── Settings ───────────────────────────────────────────────────────────────
+const slBr  = document.getElementById('sl-br');
+const slVol = document.getElementById('sl-vol');
+
+slBr.oninput = () => {
+  cfg.brightness = parseInt(slBr.value) / 100;
+  document.getElementById('lbl-br').textContent = slBr.value + '%';
+};
+slVol.oninput = () => {
+  cfg.volume = parseInt(slVol.value);
+  document.getElementById('lbl-vol').textContent = cfg.volume === 0 ? 'Off' : cfg.volume + '%';
+  if (AC && gMaster) gMaster.gain.setTargetAtTime(cfg.volume / 280, AC.currentTime, 0.25);
+};
+
+document.getElementById('tog-blooms').onchange = e => { cfg.blooms = e.target.checked; };
+document.getElementById('tog-periph').onchange = e => { cfg.periph = e.target.checked; };
+document.getElementById('tog-slow').onchange   = e => { cfg.slow   = e.target.checked; };
+
+// Respect system reduced-motion preference
+if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  document.getElementById('tog-slow').checked = true;
+  cfg.slow = true;
+}
+
+// ── Download ───────────────────────────────────────────────────────────────
+document.getElementById('btn-dl').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(
+    ['<!DOCTYPE html>\n' + document.documentElement.outerHTML],
+    { type: 'text/html' }
+  ));
+  a.download = 'neural-novelty-field.html';
+  document.body.appendChild(a); a.click(); a.remove();
+};
+
+// ── Keyboard shortcuts ─────────────────────────────────────────────────────
+window.addEventListener('keydown', ev => {
+  if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  const k = ev.key.toLowerCase();
+  if (k === 'm') document.getElementById('btn-audio').click();
+  if (k === 's') document.getElementById('btn-settings').click();
+  if (k === 'i') document.getElementById('btn-info').click();
+});
+
+})();
+</script>
+</body>
+</html>
